@@ -9,8 +9,8 @@ st.set_page_config(page_title="Stone Shop Load-Out", layout="centered")
 st.title("📱 Job Load-Out & Sign-Off")
 st.write("Complete this form alongside the subcontractor during truck loading.")
 
-# 🎯 Bypassing secrets: Hardcoding your exact public form gateway link directly
-FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLSdZ7fBuipKnD4YcfO1RV6YpcVjl2p80RSWc-sB9UCGu46BSQ/formResponse"
+# Using the exact master ID directly from your editing screen address bar to bypass typos
+FORM_URL = "https://docs.google.com/forms/d/1WWbNVnH7-9U3jEGjfMClNT-ZIKTXz1QZM73cCIapNJc/formResponse"
 
 # --- SECTION 1: JOB INFO ---
 st.header("1. Job Details")
