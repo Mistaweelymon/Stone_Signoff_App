@@ -9,7 +9,7 @@ st.set_page_config(page_title="Stone Shop Load-Out", layout="centered")
 st.title("📱 Job Load-Out & Sign-Off")
 st.write("Complete this form alongside the subcontractor during truck loading.")
 
-# Using the exact master ID directly from your editing screen address bar to bypass typos
+# Hardcoded direct public form gateway link
 FORM_URL = "https://docs.google.com/forms/d/1WWbNVnH7-9U3jEGjfMClNT-ZIKTXz1QZM73cCIapNJc/formResponse"
 
 # --- SECTION 1: JOB INFO ---
@@ -39,13 +39,26 @@ with col2:
 total_pieces = k_count + mb_count + ob_count + splash_count + other_count
 st.metric(label="Total Pieces Checked Onto Truck", value=total_pieces)
 
-# --- SECTION 4: SINKS & ACCESSORIES ---
-st.header("4. Sinks, Hardware & Extras")
-sinks_hardware = st.multiselect(
-    "Select all items physically verified and loaded:",
-    ["Under-mount Sinks", "Vessel / Drop-in Sinks", "Sink Templates", "Mounting Hardware / Clips", "Faucets / Accessories"]
+# --- SECTION 4: SINK VERIFICATION & DISPUTE PROTECTION ---
+st.header("4. Sink Accounting")
+st.write("Log exactly who provided the sinks to prevent field disputes:")
+
+col3, col4 = st.columns(2)
+with col3:
+    stock_sinks = st.number_input("Shop Stock Sinks Loaded", min_value=0, step=1)
+with col4:
+    customer_sinks = st.number_input("Customer-Provided Sinks Loaded", min_value=0, step=1)
+
+hardware_items = st.multiselect(
+    "Select accessory items verified and loaded:",
+    ["Vanity Bowls"]
 )
-sinks_notes = ", ".join(sinks_hardware) if sinks_hardware else "None"
+
+# Compile a highly detailed sink string for the office ledger
+sink_summary_parts = [f"Stock Sinks: {stock_sinks}", f"Customer Sinks: {customer_sinks}"]
+if hardware_items:
+    sink_summary_parts.append(f"Hardware: {', '.join(hardware_items)}")
+sinks_notes = " | ".join(sink_summary_parts)
 
 # --- SECTION 5: SIGNATURE ---
 st.header("5. Custody Transfer & Sign-Off")
@@ -77,27 +90,28 @@ if st.button("Submit Load-Out Sheet", type="primary"):
                 timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 sig_data = json.dumps(canvas_result.json_data["objects"])
                 
-                # Bundle the main layout data together cleanly
+                # Clean, padded string data layout
                 text_summary = (
-                    f"Timestamp: {timestamp} | Job: {job_number} | Co: {subcontractor} | "
-                    f"Name: {installer_name} | Total Loaded: {total_pieces} | "
+                    f"Job: {job_number} | "
+                    f"Co: {subcontractor} | "
+                    f"Name: {installer_name} | "
+                    f"Total Loaded: {total_pieces} | "
                     f"Breakdown: [K:{k_count}, MB:{mb_count}, Bath:{ob_count}, Splash:{splash_count}, Other:{other_count}] | "
-                    f"Sinks: {sinks_notes} | Delayed: {delayed_notes}"
+                    f"Sinks: {sinks_notes} | "
+                    f"Delayed: {delayed_notes}"
                 )
                 
-                # Form payload structure matching your exact Google Form field IDs
+                # Target the exact Form fields verified earlier
                 form_data = {
                     "entry.2095053729": text_summary,  
                     "entry.2107411274": sig_data       
                 }
                 
-                # Standard browser headers to ensure clean routing
                 headers = {
                     "Referer": FORM_URL.replace("/formResponse", "/viewform"),
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
                 }
                 
-                # Send it directly to your Form's response gate
                 response = requests.post(FORM_URL, data=form_data, headers=headers)
                 
                 if response.status_code == 200:
