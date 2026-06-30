@@ -9,11 +9,8 @@ st.set_page_config(page_title="Stone Shop Load-Out", layout="centered")
 st.title("📱 Job Load-Out & Sign-Off")
 st.write("Complete this form alongside the subcontractor during truck loading.")
 
-# Pull the form URL securely from your Streamlit Secrets panel
-try:
-    FORM_URL = st.secrets["form_url"]
-except Exception:
-    st.error("Please add form_url to your Streamlit secrets!")
+# 🎯 Bypassing secrets: Hardcoding your exact public form gateway link directly
+FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLSdZ7fBuipKnD4YcfO1RV6YpcVjl2p80RSWc-sB9UCGu46BSQ/formResponse"
 
 # --- SECTION 1: JOB INFO ---
 st.header("1. Job Details")
@@ -94,8 +91,14 @@ if st.button("Submit Load-Out Sheet", type="primary"):
                     "entry.2107411274": sig_data       
                 }
                 
+                # Standard browser headers to ensure clean routing
+                headers = {
+                    "Referer": FORM_URL.replace("/formResponse", "/viewform"),
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+                }
+                
                 # Send it directly to your Form's response gate
-                response = requests.post(FORM_URL, data=form_data)
+                response = requests.post(FORM_URL, data=form_data, headers=headers)
                 
                 if response.status_code == 200:
                     st.success(f"🎉 Success! Job {job_number} load-out sheet saved.")
