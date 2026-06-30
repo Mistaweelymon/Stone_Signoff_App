@@ -49,16 +49,13 @@ with col3:
 with col4:
     customer_sinks = st.number_input("Customer-Provided Sinks Loaded", min_value=0, step=1)
 
-hardware_items = st.multiselect(
-    "Select accessory items verified and loaded:",
-    ["Vanity Bowls"]
-)
+# Replaced the multiselect checklist with a clean, open text box for sink details
+sink_notes_input = st.text_input("Sink Notes (e.g., missing sinks, specific model types, or description)")
+if not sink_notes_input:
+    sink_notes_input = "None"
 
-# Compile a highly detailed sink string for the office ledger
-sink_summary_parts = [f"Stock Sinks: {stock_sinks}", f"Customer Sinks: {customer_sinks}"]
-if hardware_items:
-    sink_summary_parts.append(f"Hardware: {', '.join(hardware_items)}")
-sinks_notes = " | ".join(sink_summary_parts)
+# Compile a clean, descriptive sink ledger string
+sinks_notes = f"Stock Sinks: {stock_sinks} | Customer Sinks: {customer_sinks} | Sink Notes: {sink_notes_input}"
 
 # --- SECTION 5: SIGNATURE ---
 st.header("5. Custody Transfer & Sign-Off")
@@ -90,7 +87,7 @@ if st.button("Submit Load-Out Sheet", type="primary"):
                 timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 sig_data = json.dumps(canvas_result.json_data["objects"])
                 
-                # Clean, padded string data layout
+                # Sinks notes are seamlessly packaged into the text string
                 text_summary = (
                     f"Job: {job_number} | "
                     f"Co: {subcontractor} | "
@@ -101,7 +98,6 @@ if st.button("Submit Load-Out Sheet", type="primary"):
                     f"Delayed: {delayed_notes}"
                 )
                 
-                # Target the exact Form fields verified earlier
                 form_data = {
                     "entry.2095053729": text_summary,  
                     "entry.2107411274": sig_data       
