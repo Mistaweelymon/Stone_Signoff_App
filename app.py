@@ -12,7 +12,7 @@ st.write("Complete this form alongside the subcontractor during truck loading.")
 # Pull the form URL securely from your Streamlit Secrets panel
 try:
     FORM_URL = st.secrets["form_url"]
-except:
+except Exception:
     st.error("Please add form_url to your Streamlit secrets!")
 
 # --- SECTION 1: JOB INFO ---
