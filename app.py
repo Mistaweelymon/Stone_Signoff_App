@@ -1,8 +1,7 @@
 import streamlit as st
-from streamlit_gsheets import GSheetsConnection
 from streamlit_drawable_canvas import st_canvas
 import datetime
-import pandas as pd
+import requests
 import json
 
 st.set_page_config(page_title="Stone Shop Load-Out", layout="centered")
@@ -10,8 +9,11 @@ st.set_page_config(page_title="Stone Shop Load-Out", layout="centered")
 st.title("📱 Job Load-Out & Sign-Off")
 st.write("Complete this form alongside the subcontractor during truck loading.")
 
-# Connect to Google Sheets using the secrets.toml configuration
-conn = st.connection("gsheets", type=GSheetsConnection)
+# Pull the form URL securely from your Streamlit Secrets panel
+try:
+    FORM_URL = st.secrets["form_url"]
+except:
+    st.error("Please add form_url to your Streamlit secrets!")
 
 # --- SECTION 1: JOB INFO ---
 st.header("1. Job Details")
@@ -22,9 +24,9 @@ installer_name = st.text_input("Lead Installer Name")
 # --- SECTION 2: DELAYED ITEMS ---
 st.header("2. Delayed Items")
 is_partial = st.radio("Is the entire job leaving the shop today?", ["Yes - Full Job Leaving", "No - Partial Shipment"])
-delayed_notes = ""
+delayed_notes = "N/A"
 if is_partial == "No - Partial Shipment":
-    delayed_notes = st.text_area("List rooms or pieces remaining at the shop (e.g., 'Master Bath delayed'):")
+    delayed_notes = st.text_area("List rooms or pieces remaining at the shop:")
 
 # --- SECTION 3: PIECE COUNTS ---
 st.header("3. Physical Piece Count Loaded")
@@ -46,7 +48,7 @@ sinks_hardware = st.multiselect(
     "Select all items physically verified and loaded:",
     ["Under-mount Sinks", "Vessel / Drop-in Sinks", "Sink Templates", "Mounting Hardware / Clips", "Faucets / Accessories"]
 )
-sinks_notes = ", ".join(sinks_hardware)
+sinks_notes = ", ".join(sinks_hardware) if sinks_hardware else "None"
 
 # --- SECTION 5: SIGNATURE ---
 st.header("5. Custody Transfer & Sign-Off")
@@ -74,35 +76,32 @@ if st.button("Submit Load-Out Sheet", type="primary"):
         st.error("The Lead Installer must sign the signature box before submitting.")
     else:
         try:
-            with st.spinner("Saving to Google Sheets..."):
-                # 1. Pull existing rows down
-                existing_data = conn.read()
-                
-                # 2. Format new row data
+            with st.spinner("Saving data securely..."):
                 timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 sig_data = json.dumps(canvas_result.json_data["objects"])
                 
-                new_row = pd.DataFrame([{
-                    "Timestamp": timestamp,
-                    "Job Number": job_number,
-                    "Installer Company": subcontractor,
-                    "Installer Name": installer_name,
-                    "Kitchen Count": k_count,
-                    "Master Bath Count": mb_count,
-                    "Other Baths Count": ob_count,
-                    "Splash Count": splash_count,
-                    "Other Count": other_count,
-                    "Total Loaded": total_pieces,
-                    "Sinks Hardware": sinks_notes,
-                    "Delayed Items": delayed_notes if delayed_notes else "N/A",
-                    "Signature Data": sig_data
-                }])
+                # Bundle the main layout data together cleanly
+                text_summary = (
+                    f"Timestamp: {timestamp} | Job: {job_number} | Co: {subcontractor} | "
+                    f"Name: {installer_name} | Total Loaded: {total_pieces} | "
+                    f"Breakdown: [K:{k_count}, MB:{mb_count}, Bath:{ob_count}, Splash:{splash_count}, Other:{other_count}] | "
+                    f"Sinks: {sinks_notes} | Delayed: {delayed_notes}"
+                )
                 
-                # 3. Add new row to existing data and send back to Google Sheets
-                updated_df = pd.concat([existing_data, new_row], ignore_index=True)
-                conn.update(data=updated_df)
+                # Form payload structure matching your exact Google Form field IDs
+                form_data = {
+                    "entry.2095053729": text_summary,  
+                    "entry.2107411274": sig_data       
+                }
                 
-                st.success(f"🎉 Success! Job {job_number} sign-off sheet saved to Google Sheets.")
-                st.balloons()
+                # Send it directly to your Form's response gate
+                response = requests.post(FORM_URL, data=form_data)
+                
+                if response.status_code == 200:
+                    st.success(f"🎉 Success! Job {job_number} load-out sheet saved.")
+                    st.balloons()
+                else:
+                    st.error(f"Form submission returned status code: {response.status_code}")
+                    
         except Exception as e:
             st.error(f"An error occurred while saving: {e}")
