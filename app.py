@@ -6,20 +6,32 @@ import json
 
 st.set_page_config(page_title="Stone Shop Load-Out", layout="wide")
 
-# 🔗 CONFIGURATION ENDPOINTS
+# 🔗 MAIN FORM GATEWAY
 FORM_URL = "https://docs.google.com/forms/d/1WWbNVnH7-9U3jEGjfMClNT-ZIKTXz1QZM73cCIapNJc/formResponse"
 
-# 🔴 PASTE YOUR COPIED GOOGLE APPS SCRIPT WEB APP LINK RIGHT HERE BETWEEN THE QUOTES:
-WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbzXVhdQUUDKs_f0Am-iMUYU-ErTph2-0ly4hgoq0Q7dwDR-SfMFBxH1VqSkxDsfbQmIhw/exec"
+# 📅 THE MASTER SCHEDULE DESK
+# You can pre-type your upcoming runs right here. The crew will see them on their phones instantly!
+PRE_LOADED_SCHEDULE = {
+    "Job 101 - Smith Residence": {
+        "subcontractor": "Apex Installers", "k_count": 3, "mb_count": 2, "ob_count": 1,
+        "splash_count": 4, "other_count": 0, "stock_sinks": 2, "customer_sinks": 1, 
+        "sink_notes_input": "CP Blanco stainless steel sink provided by homeowner", "load_date": "2026-07-02"
+    },
+    "Job 102 - Granite Towers Apt 4B": {
+        "subcontractor": "Triangle Stone Crews", "k_count": 5, "mb_count": 0, "ob_count": 3,
+        "splash_count": 0, "other_count": 1, "stock_sinks": 4, "customer_sinks": 0, 
+        "sink_notes_input": "All shop stock vanity bowls", "load_date": "2026-07-02"
+    }
+}
 
-# --- INITIALIZE INTERNAL BLANK APP STATES ---
+# --- INITIALIZE APP STORAGE ---
 if "current_job_data" not in st.session_state:
     st.session_state.current_job_data = {
         "job_number": "", "subcontractor": "", "installer_name": "",
         "is_partial": "Yes - Full Job Leaving", "delayed_notes": "",
         "k_count": 0, "mb_count": 0, "ob_count": 0, "splash_count": 0, "other_count": 0,
         "stock_sinks": 0, "customer_sinks": 0, "sink_notes_input": "",
-        "load_date": datetime.date.today().strftime("%Y-%m-%d")
+        "load_date": datetime.date.today()
     }
 
 def reset_form():
@@ -28,7 +40,7 @@ def reset_form():
         "is_partial": "Yes - Full Job Leaving", "delayed_notes": "",
         "k_count": 0, "mb_count": 0, "ob_count": 0, "splash_count": 0, "other_count": 0,
         "stock_sinks": 0, "customer_sinks": 0, "sink_notes_input": "",
-        "load_date": datetime.date.today().strftime("%Y-%m-%d")
+        "load_date": datetime.date.today()
     }
     if "canvas_key" not in st.session_state:
         st.session_state.canvas_key = "canvas_0"
@@ -36,61 +48,52 @@ def reset_form():
         current_num = int(st.session_state.canvas_key.split("_")[1])
         st.session_state.canvas_key = f"canvas_{current_num + 1}"
 
-# --- LIVE PULL FROM GOOGLE SHEET DRAFTS QUEUE ---
-st.sidebar.title("📁 Scheduled Drafts Ledger")
-search_query = st.sidebar.text_input("🔍 Search Jobs / Subcontractors", "").strip().lower()
+# --- SIDEBAR: SEARCHABLE WORK SCHEDULE ---
+st.sidebar.title("📁 Scheduled Jobs Ledger")
+search_query = st.sidebar.text_input("🔍 Search Pre-Typed Schedule", "").strip().lower()
 
-saved_jobs_list = []
-try:
-    if WEBHOOK_URL != "PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE":
-        response = requests.get(WEBHOOK_URL, timeout=10)
-        if response.status_code == 200:
-            saved_jobs_list = response.json()
-except Exception:
-    st.sidebar.error("Could not fetch remote drafts layout.")
-
-if saved_jobs_list:
-    # Filter based on active sidebar query text
-    filtered_jobs = [
-        job for job in saved_jobs_list
-        if search_query in str(job['job_number']).lower() or search_query in str(job['subcontractor']).lower()
-    ]
-    
-    # Sort and group chronological order array mapping
-    grouped_by_date = {}
-    for job in filtered_jobs:
-        date_str = job.get("load_date", datetime.date.today().strftime("%Y-%m-%d"))
+# Group our hardcoded master dictionary chronologically by date strings
+grouped_schedule = {}
+for name, data in PRE_LOADED_SCHEDULE.items():
+    if search_query in name.lower() or search_query in data["subcontractor"].lower():
+        # Clean calendar formatting for the section layout headers
         try:
-            date_header = datetime.datetime.strptime(date_str[:10], "%Y-%m-%d").strftime("%A, %B %d")
+            d_obj = datetime.datetime.strptime(data["load_date"], "%Y-%m-%d")
+            date_header = d_obj.strftime("%A, %B %d")
         except Exception:
-            date_header = date_str
+            date_header = "Scheduled Run"
             
-        if date_header not in grouped_by_date:
-            grouped_by_date[date_header] = []
-        grouped_by_date[date_header].append(job)
-        
-    if grouped_by_date:
-        for date_header, jobs_list in grouped_by_date.items():
-            st.sidebar.markdown(f"📅 **{date_header}**")
-            for job in jobs_list:
-                col_load, col_del = st.sidebar.columns([3, 1])
-                # Load back to fields action
-                if col_load.button(f"📄 {job['job_number']}", key=f"load_{job['job_number']}", use_container_width=True):
-                    st.session_state.current_job_data = job
-                    st.rerun()
-                # Manual erase row target action
-                if col_del.button("❌", key=f"del_{job['job_number']}"):
-                    try:
-                        requests.post(WEBHOOK_URL, json={"action": "delete_draft", "job_number": job['job_number']})
-                        st.sidebar.success(f"Erased {job['job_number']}")
-                        st.rerun()
-                    except Exception as e:
-                        st.sidebar.error("Failed to delete draft row.")
-            st.sidebar.markdown("---")
-    else:
-        st.sidebar.warning("No matches found.")
+        if date_header not in grouped_schedule:
+            grouped_schedule[date_header] = []
+        grouped_schedule[date_header].append((name, data))
+
+if grouped_schedule:
+    for date_header, jobs in grouped_schedule.items():
+        st.sidebar.markdown(f"📅 **{date_header}**")
+        for name, data in jobs:
+            if st.sidebar.button(f"📄 {name}", key=f"sched_{name}", use_container_width=True):
+                # Map the cached data array elements straight to fields
+                st.session_state.current_job_data = {
+                    "job_number": name,
+                    "subcontractor": data["subcontractor"],
+                    "installer_name": "",
+                    "is_partial": "Yes - Full Job Leaving",
+                    "delayed_notes": "",
+                    "k_count": data["k_count"],
+                    "mb_count": data["mb_count"],
+                    "ob_count": data["ob_count"],
+                    "splash_count": data["splash_count"],
+                    "other_count": data["other_count"],
+                    "stock_sinks": data["stock_sinks"],
+                    "customer_sinks": data["customer_sinks"],
+                    "sink_notes_input": data["sink_notes_input"],
+                    # Wrap default parsed time formatting checks safely
+                    "load_date": datetime.datetime.strptime(data["load_date"], "%Y-%m-%d").date()
+                }
+                st.rerun()
+        st.sidebar.markdown("---")
 else:
-    st.sidebar.info("No active drafts found on spreadsheet queue.")
+    st.sidebar.info("No matching schedule items found.")
 
 # --- MAIN FORM INTERFACE ---
 st.title("📱 Job Load-Out & Sign-Off")
@@ -103,12 +106,7 @@ with col_j1:
     job_number = st.text_input("Job Name / Number", value=st.session_state.current_job_data["job_number"])
     subcontractor = st.text_input("Subcontractor Company", value=st.session_state.current_job_data["subcontractor"])
 with col_j2:
-    curr_dt = st.session_state.current_job_data.get("load_date", datetime.date.today().strftime("%Y-%m-%d"))
-    try:
-        parsed_dt = datetime.datetime.strptime(curr_dt[:10], "%Y-%m-%d").date()
-    except Exception:
-        parsed_dt = datetime.date.today()
-    job_load_date = st.date_input("Scheduled Load-Out Date", value=parsed_dt)
+    job_load_date = st.date_input("Scheduled Load-Out Date", value=st.session_state.current_job_data["load_date"])
 
 installer_name = st.text_input("Lead Installer Name", value=st.session_state.current_job_data["installer_name"])
 
@@ -161,40 +159,15 @@ canvas_result = st_canvas(
     background_color="#eee", height=150, drawing_mode="freedraw", key=st.session_state.canvas_key,
 )
 
-# --- ACTION BUTTONS FOOTER ---
+# --- ACTION FOOTER BUTTONS ---
 st.markdown("---")
-btn_col1, btn_col2, btn_col3 = st.columns([2, 2, 4])
+btn_col1, btn_col2 = st.columns([3, 5])
 
-# Button 1: Save Draft via Webhook to Spreadsheet
-if btn_col1.button("💾 Save for Future Job", use_container_width=True):
-    if not job_number:
-        st.error("Please fill out a 'Job Name / Number' before choosing Save for Future.")
-    elif WEBHOOK_URL == "PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE":
-        st.error("Please configure your deployed Webhook URL at the top of the file script.")
-    else:
-        payload = {
-            "action": "save_draft", "job_number": job_number, "subcontractor": subcontractor, "installer_name": installer_name,
-            "is_partial": is_partial, "delayed_notes": delayed_notes, "k_count": k_count, "mb_count": mb_count,
-            "ob_count": ob_count, "splash_count": splash_count, "other_count": other_count, "stock_sinks": stock_sinks,
-            "customer_sinks": customer_sinks, "sink_notes_input": sink_notes_input, "load_date": job_load_date.strftime("%Y-%m-%d")
-        }
-        try:
-            # Drop current state first before wiping if overwritten
-            requests.post(WEBHOOK_URL, json={"action": "delete_draft", "job_number": job_number})
-            requests.post(WEBHOOK_URL, json=payload)
-            st.toast(f"Draft {job_number} pushed to Sheet queue!", icon="💾")
-            reset_form()
-            st.rerun()
-        except Exception as e:
-            st.error(f"Network delivery failure: {e}")
-
-# Button 2: Manual Clear Screen
-if btn_col2.button("🧹 Clear Form Screen", use_container_width=True):
+if btn_col1.button("🧹 Clear / Reset Screen", use_container_width=True):
     reset_form()
     st.rerun()
 
-# Button 3: Submit Complete Sheet (Form post + remote cleanup combo)
-if btn_col3.button("Submit Load-Out Sheet", type="primary", use_container_width=True):
+if btn_col2.button("Submit Load-Out Sheet", type="primary", use_container_width=True):
     if not job_number or not installer_name or not subcontractor:
         st.error("Please fill out the Job Number, Subcontractor, and Installer Name before submitting.")
     elif not canvas_result.json_data or len(canvas_result.json_data["objects"]) == 0:
@@ -220,10 +193,6 @@ if btn_col3.button("Submit Load-Out Sheet", type="primary", use_container_width=
                 response = requests.post(FORM_URL, data=form_data, headers=headers)
                 
                 if response.status_code == 200:
-                    # Clean up the draft tab row since the job is now finalized
-                    if WEBHOOK_URL != "PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE":
-                        requests.post(WEBHOOK_URL, json={"action": "delete_draft", "job_number": job_number})
-                    
                     st.success(f"🎉 Success! Job {job_number} load-out sheet saved.")
                     st.balloons()
                     reset_form()
