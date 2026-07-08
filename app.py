@@ -12,6 +12,18 @@ import uuid
 
 st.set_page_config(page_title="Stone Shop Load-Out", layout="wide")
 
+# --- NATIVE APP UI HACK ---
+hide_streamlit_style = """
+<style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    /* Shrink the top padding so the app sits flush with the phone status bar */
+    .block-container {padding-top: 1rem; padding-bottom: 1rem;}
+</style>
+"""
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+
 # 🔗 MAIN FORM ENDPOINT
 FORM_URL = "https://docs.google.com/forms/d/1WWbNVnH7-9U3jEGjfMClNT-ZIKTXz1QZM73cCIapNJc/formResponse"
 
