@@ -99,7 +99,8 @@ if saved_rows is not None and not saved_rows.empty:
                     
                     if col_load.button(f"📄 {r_data['job_number']} ({short_date})", key=f"load_{r_data['job_number']}", use_container_width=True):
                         st.session_state.form_buffer = r_data
-                        # Keep the version but force rerun to bind the loaded values
+                        # FIX: Increment the form version so the screen hard-reloads the new data into the text boxes!
+                        st.session_state.form_version += 1
                         st.rerun()
                         
                     if col_del.button("❌", key=f"del_{r_data['job_number']}"):
