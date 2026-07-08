@@ -1,3 +1,4 @@
 st-gsheets-connection
 streamlit-drawable-canvas
 pandas
+SQLAlchemy>=1.4.0
