@@ -15,7 +15,9 @@ st.set_page_config(page_title="Stone Shop Load-Out", layout="wide")
 # 🔗 MAIN FORM ENDPOINT
 FORM_URL = "https://docs.google.com/forms/d/1WWbNVnH7-9U3jEGjfMClNT-ZIKTXz1QZM73cCIapNJc/formResponse"
 
-# --- SINK MASTER LIST ---
+# --- SYSTEM LISTS ---
+SUB_COMPANIES = ["Select Subcontractor...", "JC", "Bertin", "Eduar"]
+
 SINK_MODELS = [
     "Select a sink...",
     "1812", "1714", "1611", 
@@ -34,7 +36,6 @@ def get_db_connection():
 def init_db():
     conn = get_db_connection()
     with conn.session as session:
-        # Created drafts_v2 to handle the new complex JSON list format for sinks
         session.execute(text("""
             CREATE TABLE IF NOT EXISTS drafts_v2 (
                 job_number TEXT PRIMARY KEY,
@@ -63,7 +64,7 @@ if "form_version" not in st.session_state:
 
 if "form_buffer" not in st.session_state:
     st.session_state.form_buffer = {
-        "job_number": "", "subcontractor": "", "installer_name": "",
+        "job_number": "", "subcontractor": "Select Subcontractor...", "installer_name": "",
         "is_partial": "Yes - Full Job Leaving", "delayed_notes": "N/A",
         "k_count": 0, "mb_count": 0, "ob_count": 0, "splash_count": 0, "other_count": 0,
         "stock_sinks_list": [], "customer_sinks": 0, "sink_notes_input": "",
@@ -72,7 +73,7 @@ if "form_buffer" not in st.session_state:
 
 def reset_form():
     st.session_state.form_buffer = {
-        "job_number": "", "subcontractor": "", "installer_name": "",
+        "job_number": "", "subcontractor": "Select Subcontractor...", "installer_name": "",
         "is_partial": "Yes - Full Job Leaving", "delayed_notes": "N/A",
         "k_count": 0, "mb_count": 0, "ob_count": 0, "splash_count": 0, "other_count": 0,
         "stock_sinks_list": [], "customer_sinks": 0, "sink_notes_input": "",
@@ -92,16 +93,22 @@ if saved_rows is not None and not saved_rows.empty:
     for _, row in saved_rows.iterrows():
         r_dict = dict(row)
         job_name = str(r_dict["job_number"])
-        sub_co = str(r_dict["subcontractor"]) if r_dict["subcontractor"] else "Unassigned Subcontractors"
+        sub_co = str(r_dict["subcontractor"])
         
+        # Catch any blanks or defaults and group them together
+        if sub_co == "Select Subcontractor..." or not sub_co:
+            sub_co = "Unassigned Jobs"
+            
         if search_query in job_name.lower() or search_query in sub_co.lower():
             if sub_co not in grouped_by_installer:
                 grouped_by_installer[sub_co] = []
             grouped_by_installer[sub_co].append(r_dict)
             
     if grouped_by_installer:
+        # Loop through the groups to create specific tabs/expanders for JC, Bertin, Eduar, etc.
         for installer_co, jobs_list in grouped_by_installer.items():
             with st.sidebar.expander(f"🚛 {installer_co} ({len(jobs_list)})", expanded=True):
+                # Sort the jobs chronologically by date within this specific tab
                 sorted_jobs = sorted(jobs_list, key=lambda x: x.get("load_date", ""))
                 
                 for r_data in sorted_jobs:
@@ -114,7 +121,6 @@ if saved_rows is not None and not saved_rows.empty:
                     col_load, col_del = st.columns([4, 1])
                     
                     if col_load.button(f"📄 {r_data['job_number']} ({short_date})", key=f"load_{r_data['job_number']}", use_container_width=True):
-                        # Parse the JSON string back into a Python list cleanly
                         try:
                             loaded_sinks = json.loads(r_data["stock_sinks_json"])
                         except Exception:
@@ -161,7 +167,12 @@ st.header("1. Job Details")
 col_j1, col_j2 = st.columns([2, 1])
 with col_j1:
     job_number = st.text_input("Job Name / Number", value=st.session_state.form_buffer["job_number"], key=f"job_num_{v}")
-    subcontractor = st.text_input("Subcontractor Company", value=st.session_state.form_buffer["subcontractor"], key=f"sub_{v}")
+    
+    # Check buffer for dropdown index
+    curr_sub = st.session_state.form_buffer["subcontractor"]
+    sub_idx = SUB_COMPANIES.index(curr_sub) if curr_sub in SUB_COMPANIES else 0
+    subcontractor = st.selectbox("Subcontractor Company", SUB_COMPANIES, index=sub_idx, key=f"sub_{v}")
+    
 with col_j2:
     curr_dt = str(st.session_state.form_buffer.get("load_date", datetime.date.today().strftime("%Y-%m-%d")))
     try:
@@ -203,13 +214,11 @@ st.subheader("🛒 Shop Stock Sinks")
 for sink in st.session_state.form_buffer["stock_sinks_list"]:
     sc1, sc2, sc3 = st.columns([6, 2, 1])
     with sc1:
-        # Determine current index to keep dropdown locked on correct value
         current_idx = SINK_MODELS.index(sink["model"]) if sink["model"] in SINK_MODELS else 0
         sink["model"] = st.selectbox("Model", SINK_MODELS, index=current_idx, key=f"mod_{sink['id']}_{v}", label_visibility="collapsed")
     with sc2:
         sink["qty"] = st.number_input("Qty", min_value=1, step=1, value=sink["qty"], key=f"qty_{sink['id']}_{v}", label_visibility="collapsed")
     with sc3:
-        # X Button removes the specific UUID dictionary from the list
         if st.button("❌", key=f"del_{sink['id']}_{v}"):
             st.session_state.form_buffer["stock_sinks_list"].remove(sink)
             st.rerun()
@@ -249,8 +258,8 @@ st.markdown("---")
 btn_col1, btn_col2, btn_col3 = st.columns([2, 2, 4])
 
 if btn_col1.button("💾 Save for Future Job", use_container_width=True):
-    if not job_number:
-        st.error("Please fill out a 'Job Name / Number' before choosing Save for Future.")
+    if not job_number or subcontractor == "Select Subcontractor...":
+        st.error("Please fill out a 'Job Name / Number' and select a 'Subcontractor' before choosing Save for Future.")
     else:
         conn = get_db_connection()
         with conn.session as session:
@@ -276,7 +285,7 @@ if btn_col2.button("🧹 Clear Form Screen", use_container_width=True):
     st.rerun()
 
 if btn_col3.button("Submit Load-Out Sheet", type="primary", use_container_width=True):
-    if not job_number or not installer_name or not subcontractor:
+    if not job_number or not installer_name or subcontractor == "Select Subcontractor...":
         st.error("Please fill out the Job Number, Subcontractor, and Installer Name before submitting.")
     elif not canvas_result.json_data or len(canvas_result.json_data["objects"]) == 0:
         st.error("The Lead Installer must sign the signature box before submitting.")
