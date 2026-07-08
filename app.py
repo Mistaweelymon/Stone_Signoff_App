@@ -10,13 +10,15 @@ st.set_page_config(page_title="Stone Shop Load-Out", layout="wide")
 FORM_URL = "https://docs.google.com/forms/d/1WWbNVnH7-9U3jEGjfMClNT-ZIKTXz1QZM73cCIapNJc/formResponse"
 
 # --- SHARED CLOUD DATABASE CONFIGURATION ---
+# --- SHARED CLOUD DATABASE CONFIGURATION ---
 def get_db_connection():
-    return st.connection("sqlite_project", type="sql").connect()
+    # Connects directly to Streamlit's shared cloud SQL workspace
+    return st.connection("sqlite_project", type="sql")
 
 def init_db():
     conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
+    # Streamlit handles text execution directly without needing a cursor object
+    conn.query("""
         CREATE TABLE IF NOT EXISTS drafts (
             job_number TEXT PRIMARY KEY,
             subcontractor TEXT,
@@ -33,9 +35,9 @@ def init_db():
             sink_notes_input TEXT,
             load_date TEXT
         )
-    """)
-    conn.commit()
+    """, ttl=0)
 
+# Initialize the global shared database table instantly
 init_db()
 
 # --- INITIALIZE APP SEED STATES ---
