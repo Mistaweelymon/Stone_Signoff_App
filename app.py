@@ -39,35 +39,38 @@ def init_db():
 
 init_db()
 
-# --- INITIALIZE APP SEED STATES ---
-if "current_job_data" not in st.session_state:
-    st.session_state.current_job_data = {
-        "job_number": "", "subcontractor": "", "installer_name": "",
-        "is_partial": "Yes - Full Job Leaving", "delayed_notes": "",
-        "k_count": 0, "mb_count": 0, "ob_count": 0, "splash_count": 0, "other_count": 0,
-        "stock_sinks": 0, "customer_sinks": 0, "sink_notes_input": "",
-        "load_date": datetime.date.today().strftime("%Y-%m-%d")
-    }
+# --- STATE SYNC MANAGEMENT ---
+# Initialize session state keys cleanly on first load
+default_states = {
+    "input_job_num": "", "input_sub_co": "", "input_inst_name": "",
+    "input_is_partial": "Yes - Full Job Leaving", "input_delayed_notes": "N/A",
+    "input_k": 0, "input_mb": 0, "input_ob": 0, "input_splash": 0, "input_other": 0,
+    "input_stock_sinks": 0, "input_cust_sinks": 0, "input_sink_notes": "",
+    "input_load_date": datetime.date.today()
+}
+
+for key, val in default_states.items():
+    if key not in st.session_state:
+        st.session_state[key] = val
 
 def reset_form():
-    st.session_state.current_job_data = {
-        "job_number": "", "subcontractor": "", "installer_name": "",
-        "is_partial": "Yes - Full Job Leaving", "delayed_notes": "",
-        "k_count": 0, "mb_count": 0, "ob_count": 0, "splash_count": 0, "other_count": 0,
-        "stock_sinks": 0, "customer_sinks": 0, "sink_notes_input": "",
-        "load_date": datetime.date.today().strftime("%Y-%m-%d")
-    }
+    # Force reset every single active widget key value directly in memory
+    st.session_state["input_job_num"] = ""
+    st.session_state["input_sub_co"] = ""
+    st.session_state["input_inst_name"] = ""
+    st.session_state["input_is_partial"] = "Yes - Full Job Leaving"
+    st.session_state["input_delayed_notes"] = "N/A"
+    st.session_state["input_k"] = 0
+    st.session_state["input_mb"] = 0
+    st.session_state["input_ob"] = 0
+    st.session_state["input_splash"] = 0
+    st.session_state["input_other"] = 0
+    st.session_state["input_stock_sinks"] = 0
+    st.session_state["input_cust_sinks"] = 0
+    st.session_state["input_sink_notes"] = ""
+    st.session_state["input_load_date"] = datetime.date.today()
     
-    # Comprehensive wipeout of ALL widget tracking keys to force an absolute visual refresh
-    all_keys = [
-        "input_job_num", "input_sub_co", "input_load_date", "input_inst_name",
-        "input_is_partial", "input_delayed_notes", "input_k", "input_mb", "input_ob",
-        "input_splash", "input_other", "input_stock_sinks", "input_cust_sinks", "input_sink_notes"
-    ]
-    for key in all_keys:
-        if key in st.session_state:
-            del st.session_state[key]
-            
+    # Increment signature canvas key to wipe the drawing box clean
     if "canvas_key" not in st.session_state:
         st.session_state.canvas_key = "canvas_0"
     else:
@@ -108,9 +111,7 @@ if saved_rows is not None and not saved_rows.empty:
                     col_load, col_del = st.columns([4, 1])
                     
                     if col_load.button(f"📄 {r_data['job_number']} ({short_date})", key=f"load_{r_data['job_number']}", use_container_width=True):
-                        st.session_state.current_job_data = r_data
-                        
-                        # Ingest baseline structural data parameters seamlessly to match session variables
+                        # Update keys directly to instantly change what the screen widgets show
                         st.session_state["input_job_num"] = r_data["job_number"]
                         st.session_state["input_sub_co"] = r_data["subcontractor"]
                         st.session_state["input_inst_name"] = r_data["installer_name"]
@@ -151,37 +152,31 @@ st.write("Complete this form alongside the subcontractor during truck loading.")
 st.header("1. Job Details")
 col_j1, col_j2 = st.columns([2, 1])
 with col_j1:
-    job_number = st.text_input("Job Name / Number", value=st.session_state.current_job_data["job_number"], key="input_job_num")
-    subcontractor = st.text_input("Subcontractor Company", value=st.session_state.current_job_data["subcontractor"], key="input_sub_co")
+    job_number = st.text_input("Job Name / Number", key="input_job_num")
+    subcontractor = st.text_input("Subcontractor Company", key="input_sub_co")
 with col_j2:
-    curr_dt = str(st.session_state.current_job_data.get("load_date", datetime.date.today().strftime("%Y-%m-%d")))
-    try:
-        parsed_dt = datetime.datetime.strptime(curr_dt[:10], "%Y-%m-%d").date()
-    except Exception:
-        parsed_dt = datetime.date.today()
-    job_load_date = st.date_input("Scheduled Load-Out Date", value=parsed_dt, key="input_load_date")
+    job_load_date = st.date_input("Scheduled Load-Out Date", key="input_load_date")
 
-installer_name = st.text_input("Lead Installer Name", value=st.session_state.current_job_data["installer_name"], key="input_inst_name")
+installer_name = st.text_input("Lead Installer Name", key="input_inst_name")
 
 # --- SECTION 2: DELAYED ITEMS ---
 st.header("2. Delayed Items")
-default_idx = 0 if st.session_state.current_job_data["is_partial"] == "Yes - Full Job Leaving" else 1
-is_partial = st.radio("Is the entire job leaving the shop today?", ["Yes - Full Job Leaving", "No - Partial Shipment"], index=default_idx, key="input_is_partial")
+is_partial = st.radio("Is the entire job leaving the shop today?", ["Yes - Full Job Leaving", "No - Partial Shipment"], key="input_is_partial")
 
 delayed_notes = "N/A"
 if is_partial == "No - Partial Shipment":
-    delayed_notes = st.text_area("List rooms or pieces remaining at the shop:", value=st.session_state.current_job_data["delayed_notes"], key="input_delayed_notes")
+    delayed_notes = st.text_area("List rooms or pieces remaining at the shop:", key="input_delayed_notes")
 
 # --- SECTION 3: PIECE COUNTS ---
 st.header("3. Physical Piece Count Loaded")
 col1, col2 = st.columns(2)
 with col1:
-    k_count = st.number_input("Kitchen Pieces", min_value=0, step=1, value=int(st.session_state.current_job_data["k_count"]), key="input_k")
-    mb_count = st.number_input("Primary / Master Bath Pieces", min_value=0, step=1, value=int(st.session_state.current_job_data["mb_count"]), key="input_mb")
-    ob_count = st.number_input("Additional Bath Pieces", min_value=0, step=1, value=int(st.session_state.current_job_data["ob_count"]), key="input_ob")
+    k_count = st.number_input("Kitchen Pieces", min_value=0, step=1, key="input_k")
+    mb_count = st.number_input("Primary / Master Bath Pieces", min_value=0, step=1, key="input_mb")
+    ob_count = st.number_input("Additional Bath Pieces", min_value=0, step=1, key="input_ob")
 with col2:
-    splash_count = st.number_input("Loose Splash Pieces", min_value=0, step=1, value=int(st.session_state.current_job_data["splash_count"]), key="input_splash")
-    other_count = st.number_input("Other (Fireplace, Laundry, etc.)", min_value=0, step=1, value=int(st.session_state.current_job_data["other_count"]), key="input_other")
+    splash_count = st.number_input("Loose Splash Pieces", min_value=0, step=1, key="input_splash")
+    other_count = st.number_input("Other (Fireplace, Laundry, etc.)", min_value=0, step=1, key="input_other")
 
 total_pieces = k_count + mb_count + ob_count + splash_count + other_count
 st.metric(label="Total Pieces Checked Onto Truck", value=total_pieces)
@@ -190,11 +185,11 @@ st.metric(label="Total Pieces Checked Onto Truck", value=total_pieces)
 st.header("4. Sink Accounting")
 col3, col4 = st.columns(2)
 with col3:
-    stock_sinks = st.number_input("Shop Stock Sinks Loaded", min_value=0, step=1, value=int(st.session_state.current_job_data["stock_sinks"]), key="input_stock_sinks")
+    stock_sinks = st.number_input("Shop Stock Sinks Loaded", min_value=0, step=1, key="input_stock_sinks")
 with col4:
-    customer_sinks = st.number_input("Customer-Provided Sinks Loaded", min_value=0, step=1, value=int(st.session_state.current_job_data["customer_sinks"]), key="input_cust_sinks")
+    customer_sinks = st.number_input("Customer-Provided Sinks Loaded", min_value=0, step=1, key="input_cust_sinks")
 
-sink_notes_input = st.text_input("Sink Notes (e.g., missing sinks, specific model types, or description)", value=st.session_state.current_job_data["sink_notes_input"], key="input_sink_notes")
+sink_notes_input = st.text_input("Sink Notes (e.g., missing sinks, specific model types, or description)", key="input_sink_notes")
 sink_notes_final = "None" if not sink_notes_input else sink_notes_input
 
 sinks_notes = f"Stock Sinks: {stock_sinks} | Customer Sinks: {customer_sinks} | Sink Notes: {sink_notes_final}"
