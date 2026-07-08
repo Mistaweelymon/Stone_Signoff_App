@@ -16,7 +16,6 @@ def get_db_connection():
 
 def init_db():
     conn = get_db_connection()
-    # Use session block context for structural non-returning queries
     with conn.session as session:
         session.execute(text("""
             CREATE TABLE IF NOT EXISTS drafts (
@@ -58,53 +57,59 @@ def reset_form():
         "stock_sinks": 0, "customer_sinks": 0, "sink_notes_input": "",
         "load_date": datetime.date.today().strftime("%Y-%m-%d")
     }
+    # Explicitly clear out widget keys from session state memory to force visual resets
+    for key in ["input_job_num", "input_sub_co", "input_load_date", "input_inst_name"]:
+        if key in st.session_state:
+            del st.session_state[key]
+            
     if "canvas_key" not in st.session_state:
         st.session_state.canvas_key = "canvas_0"
     else:
         current_num = int(st.session_state.canvas_key.split("_")[1])
         st.session_state.canvas_key = f"canvas_{current_num + 1}"
 
-# --- SIDEBAR: SECURE CLOUD SCHEDULE LEDGER ---
+# --- SIDEBAR: REFINED GROUPING BY INSTALLER COMPANY ---
 st.sidebar.title("📁 Scheduled Drafts Ledger")
 search_query = st.sidebar.text_input("🔍 Search Jobs / Subcontractors", "").strip().lower()
 
-# Reading data rows DOES return rows, so conn.query() is safe here
 conn = get_db_connection()
 saved_rows = conn.query("SELECT * FROM drafts", ttl=0)
 
 if saved_rows is not None and not saved_rows.empty:
-    grouped_schedule = {}
+    grouped_by_installer = {}
     for _, row in saved_rows.iterrows():
         r_dict = dict(row)
         job_name = str(r_dict["job_number"])
         sub_co = str(r_dict["subcontractor"]) if r_dict["subcontractor"] else "Unassigned Subcontractors"
         
         if search_query in job_name.lower() or search_query in sub_co.lower():
-            date_str = str(r_dict["load_date"])
-            try:
-                date_header = datetime.datetime.strptime(date_str[:10], "%Y-%m-%d").strftime("%A, %B %d")
-            except Exception:
-                date_header = date_str
-                
-            if date_header not in grouped_schedule:
-                grouped_schedule[date_header] = []
-            grouped_schedule[date_header].append(r_dict)
+            if sub_co not in grouped_by_installer:
+                grouped_by_installer[sub_co] = []
+            grouped_by_installer[sub_co].append(r_dict)
             
-    if grouped_schedule:
-        for date_header, rows_list in grouped_schedule.items():
-            st.sidebar.markdown(f"📅 **{date_header}**")
-            for r_data in rows_list:
-                col_load, col_del = st.sidebar.columns([4, 1])
+    if grouped_by_installer:
+        for installer_co, jobs_list in grouped_by_installer.items():
+            with st.sidebar.expander(f"🚛 {installer_co} ({len(jobs_list)})", expanded=True):
+                sorted_jobs = sorted(jobs_list, key=lambda x: x.get("load_date", ""))
                 
-                if col_load.button(f"📄 {r_data['job_number']}", key=f"load_{r_data['job_number']}", use_container_width=True):
-                    st.session_state.current_job_data = r_data
-                    st.rerun()
+                for r_data in sorted_jobs:
+                    date_str = str(r_data["load_date"])
+                    try:
+                        short_date = datetime.datetime.strptime(date_str[:10], "%Y-%m-%d").strftime("%b %d")
+                    except Exception:
+                        short_date = date_str
                     
-                if col_del.button("❌", key=f"del_{r_data['job_number']}"):
-                    with conn.session as session:
-                        session.execute(text("DELETE FROM drafts WHERE job_number = :job"), {"job": r_data['job_number']})
-                        session.commit()
-                    st.rerun()
+                    col_load, col_del = st.columns([4, 1])
+                    
+                    if col_load.button(f"📄 {r_data['job_number']} ({short_date})", key=f"load_{r_data['job_number']}", use_container_width=True):
+                        st.session_state.current_job_data = r_data
+                        st.rerun()
+                        
+                    if col_del.button("❌", key=f"del_{r_data['job_number']}"):
+                        with conn.session as session:
+                            session.execute(text("DELETE FROM drafts WHERE job_number = :job"), {"job": r_data['job_number']})
+                            session.commit()
+                        st.rerun()
             st.sidebar.markdown("---")
     else:
         st.sidebar.warning("No matching drafts found.")
@@ -119,17 +124,17 @@ st.write("Complete this form alongside the subcontractor during truck loading.")
 st.header("1. Job Details")
 col_j1, col_j2 = st.columns([2, 1])
 with col_j1:
-    job_number = st.text_input("Job Name / Number", value=st.session_state.current_job_data["job_number"])
-    subcontractor = st.text_input("Subcontractor Company", value=st.session_state.current_job_data["subcontractor"])
+    job_number = st.text_input("Job Name / Number", value=st.session_state.current_job_data["job_number"], key="input_job_num")
+    subcontractor = st.text_input("Subcontractor Company", value=st.session_state.current_job_data["subcontractor"], key="input_sub_co")
 with col_j2:
     curr_dt = str(st.session_state.current_job_data.get("load_date", datetime.date.today().strftime("%Y-%m-%d")))
     try:
         parsed_dt = datetime.datetime.strptime(curr_dt[:10], "%Y-%m-%d").date()
     except Exception:
         parsed_dt = datetime.date.today()
-    job_load_date = st.date_input("Scheduled Load-Out Date", value=parsed_dt)
+    job_load_date = st.date_input("Scheduled Load-Out Date", value=parsed_dt, key="input_load_date")
 
-installer_name = st.text_input("Lead Installer Name", value=st.session_state.current_job_data["installer_name"])
+installer_name = st.text_input("Lead Installer Name", value=st.session_state.current_job_data["installer_name"], key="input_inst_name")
 
 # --- SECTION 2: DELAYED ITEMS ---
 st.header("2. Delayed Items")
@@ -184,7 +189,7 @@ canvas_result = st_canvas(
 st.markdown("---")
 btn_col1, btn_col2, btn_col3 = st.columns([2, 2, 4])
 
-# Button 1: Save / Update Shared Cloud Draft securely via Session Context
+# Button 1: Save / Update Shared Cloud Draft
 if btn_col1.button("💾 Save for Future Job", use_container_width=True):
     if not job_number:
         st.error("Please fill out a 'Job Name / Number' before choosing Save for Future.")
@@ -213,7 +218,7 @@ if btn_col2.button("🧹 Clear Form Screen", use_container_width=True):
     reset_form()
     st.rerun()
 
-# Button 3: Submit Complete Sheet (Form Post + Safe Session Transaction cleanup combo)
+# Button 3: Submit Complete Sheet
 if btn_col3.button("Submit Load-Out Sheet", type="primary", use_container_width=True):
     if not job_number or not installer_name or not subcontractor:
         st.error("Please fill out the Job Number, Subcontractor, and Installer Name before submitting.")
@@ -240,7 +245,6 @@ if btn_col3.button("Submit Load-Out Sheet", type="primary", use_container_width=
                 response = requests.post(FORM_URL, data=form_data, headers=headers)
                 
                 if response.status_code == 200:
-                    # Clean out the cloud table row using a standard clean data deletion context
                     conn = get_db_connection()
                     with conn.session as session:
                         session.execute(text("DELETE FROM drafts WHERE job_number = :job"), {"job": job_number})
