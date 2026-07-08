@@ -2,6 +2,7 @@ import streamlit as st
 from streamlit_drawable_canvas import st_canvas
 import datetime
 import requests
+from sqlalchemy import text
 import json
 
 st.set_page_config(page_title="Stone Shop Load-Out", layout="wide")
@@ -10,34 +11,33 @@ st.set_page_config(page_title="Stone Shop Load-Out", layout="wide")
 FORM_URL = "https://docs.google.com/forms/d/1WWbNVnH7-9U3jEGjfMClNT-ZIKTXz1QZM73cCIapNJc/formResponse"
 
 # --- SHARED CLOUD DATABASE CONFIGURATION ---
-# --- SHARED CLOUD DATABASE CONFIGURATION ---
 def get_db_connection():
-    # Connects directly to Streamlit's shared cloud SQL workspace
     return st.connection("sqlite_project", type="sql")
 
 def init_db():
     conn = get_db_connection()
-    # Streamlit handles text execution directly without needing a cursor object
-    conn.query("""
-        CREATE TABLE IF NOT EXISTS drafts (
-            job_number TEXT PRIMARY KEY,
-            subcontractor TEXT,
-            installer_name TEXT,
-            is_partial TEXT,
-            delayed_notes TEXT,
-            k_count INTEGER,
-            mb_count INTEGER,
-            ob_count INTEGER,
-            splash_count INTEGER,
-            other_count INTEGER,
-            stock_sinks INTEGER,
-            customer_sinks INTEGER,
-            sink_notes_input TEXT,
-            load_date TEXT
-        )
-    """, ttl=0)
+    # Use session block context for structural non-returning queries
+    with conn.session as session:
+        session.execute(text("""
+            CREATE TABLE IF NOT EXISTS drafts (
+                job_number TEXT PRIMARY KEY,
+                subcontractor TEXT,
+                installer_name TEXT,
+                is_partial TEXT,
+                delayed_notes TEXT,
+                k_count INTEGER,
+                mb_count INTEGER,
+                ob_count INTEGER,
+                splash_count INTEGER,
+                other_count INTEGER,
+                stock_sinks INTEGER,
+                customer_sinks INTEGER,
+                sink_notes_input TEXT,
+                load_date TEXT
+            )
+        """))
+        session.commit()
 
-# Initialize the global shared database table instantly
 init_db()
 
 # --- INITIALIZE APP SEED STATES ---
@@ -64,53 +64,48 @@ def reset_form():
         current_num = int(st.session_state.canvas_key.split("_")[1])
         st.session_state.canvas_key = f"canvas_{current_num + 1}"
 
-# --- SIDEBAR: REFINED GROUPING BY INSTALLER COMPANY ---
+# --- SIDEBAR: SECURE CLOUD SCHEDULE LEDGER ---
 st.sidebar.title("📁 Scheduled Drafts Ledger")
 search_query = st.sidebar.text_input("🔍 Search Jobs / Subcontractors", "").strip().lower()
 
+# Reading data rows DOES return rows, so conn.query() is safe here
 conn = get_db_connection()
-cursor = conn.cursor()
-cursor.execute("SELECT * FROM drafts")
-saved_rows = cursor.fetchall()
+saved_rows = conn.query("SELECT * FROM drafts", ttl=0)
 
-if saved_rows:
-    # Group the active drafts by Subcontractor/Installer Company first
-    grouped_by_installer = {}
-    for row in saved_rows:
+if saved_rows is not None and not saved_rows.empty:
+    grouped_schedule = {}
+    for _, row in saved_rows.iterrows():
         r_dict = dict(row)
-        job_name = r_dict["job_number"]
-        sub_co = r_dict["subcontractor"] if r_dict["subcontractor"] else "Unassigned Subcontractors"
+        job_name = str(r_dict["job_number"])
+        sub_co = str(r_dict["subcontractor"]) if r_dict["subcontractor"] else "Unassigned Subcontractors"
         
         if search_query in job_name.lower() or search_query in sub_co.lower():
-            if sub_co not in grouped_by_installer:
-                grouped_by_installer[sub_co] = []
-            grouped_by_installer[sub_co].append(r_dict)
-            
-    if grouped_by_installer:
-        for installer_co, jobs_list in grouped_by_installer.items():
-            # Create a clean dropdown expander box for each installation crew company
-            with st.sidebar.expander(f"🚛 {installer_co} ({len(jobs_list)})", expanded=True):
-                # Sort jobs inside the crew container by scheduled loading date
-                sorted_jobs = sorted(jobs_list, key=lambda x: x.get("load_date", ""))
+            date_str = str(r_dict["load_date"])
+            try:
+                date_header = datetime.datetime.strptime(date_str[:10], "%Y-%m-%d").strftime("%A, %B %d")
+            except Exception:
+                date_header = date_str
                 
-                for r_data in sorted_jobs:
-                    date_str = r_data["load_date"]
-                    try:
-                        short_date = datetime.datetime.strptime(date_str[:10], "%Y-%m-%d").strftime("%b %d")
-                    except Exception:
-                        short_date = date_str
+            if date_header not in grouped_schedule:
+                grouped_schedule[date_header] = []
+            grouped_schedule[date_header].append(r_dict)
+            
+    if grouped_schedule:
+        for date_header, rows_list in grouped_schedule.items():
+            st.sidebar.markdown(f"📅 **{date_header}**")
+            for r_data in rows_list:
+                col_load, col_del = st.sidebar.columns([4, 1])
+                
+                if col_load.button(f"📄 {r_data['job_number']}", key=f"load_{r_data['job_number']}", use_container_width=True):
+                    st.session_state.current_job_data = r_data
+                    st.rerun()
                     
-                    col_load, col_del = st.columns([4, 1])
-                    # Tapping a job pre-fills the screen
-                    if col_load.button(f"📄 {r_data['job_number']} ({short_date})", key=f"load_{r_data['job_number']}", use_container_width=True):
-                        st.session_state.current_job_data = r_data
-                        st.rerun()
-                    # Delete/Cancel item out of draft matrix completely
-                    if col_del.button("❌", key=f"del_{r_data['job_number']}"):
-                        conn = get_db_connection()
-                        conn.execute("DELETE FROM drafts WHERE job_number = ?", (r_data['job_number'],))
-                        conn.commit()
-                        st.rerun()
+                if col_del.button("❌", key=f"del_{r_data['job_number']}"):
+                    with conn.session as session:
+                        session.execute(text("DELETE FROM drafts WHERE job_number = :job"), {"job": r_data['job_number']})
+                        session.commit()
+                    st.rerun()
+            st.sidebar.markdown("---")
     else:
         st.sidebar.warning("No matching drafts found.")
 else:
@@ -127,7 +122,7 @@ with col_j1:
     job_number = st.text_input("Job Name / Number", value=st.session_state.current_job_data["job_number"])
     subcontractor = st.text_input("Subcontractor Company", value=st.session_state.current_job_data["subcontractor"])
 with col_j2:
-    curr_dt = st.session_state.current_job_data.get("load_date", datetime.date.today().strftime("%Y-%m-%d"))
+    curr_dt = str(st.session_state.current_job_data.get("load_date", datetime.date.today().strftime("%Y-%m-%d")))
     try:
         parsed_dt = datetime.datetime.strptime(curr_dt[:10], "%Y-%m-%d").date()
     except Exception:
@@ -189,22 +184,25 @@ canvas_result = st_canvas(
 st.markdown("---")
 btn_col1, btn_col2, btn_col3 = st.columns([2, 2, 4])
 
-# Button 1: Save / Update Shared Cloud Draft
+# Button 1: Save / Update Shared Cloud Draft securely via Session Context
 if btn_col1.button("💾 Save for Future Job", use_container_width=True):
     if not job_number:
         st.error("Please fill out a 'Job Name / Number' before choosing Save for Future.")
     else:
         conn = get_db_connection()
-        conn.execute("""
-            INSERT OR REPLACE INTO drafts (
-                job_number, subcontractor, installer_name, is_partial, delayed_notes,
-                k_count, mb_count, ob_count, splash_count, other_count, stock_sinks, customer_sinks, sink_notes_input, load_date
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            job_number, subcontractor, installer_name, is_partial, delayed_notes,
-            k_count, mb_count, ob_count, splash_count, other_count, stock_sinks, customer_sinks, sink_notes_input, job_load_date.strftime("%Y-%m-%d")
-        ))
-        conn.commit()
+        with conn.session as session:
+            session.execute(text("""
+                INSERT OR REPLACE INTO drafts (
+                    job_number, subcontractor, installer_name, is_partial, delayed_notes,
+                    k_count, mb_count, ob_count, splash_count, other_count, stock_sinks, customer_sinks, sink_notes_input, load_date
+                ) VALUES (:job_number, :subcontractor, :installer_name, :is_partial, :delayed_notes,
+                          :k_count, :mb_count, :ob_count, :splash_count, :other_count, :stock_sinks, :customer_sinks, :sink_notes_input, :load_date)
+            """), {
+                "job_number": job_number, "subcontractor": subcontractor, "installer_name": installer_name, "is_partial": is_partial, "delayed_notes": delayed_notes,
+                "k_count": k_count, "mb_count": mb_count, "ob_count": ob_count, "splash_count": splash_count, "other_count": other_count, 
+                "stock_sinks": stock_sinks, "customer_sinks": customer_sinks, "sink_notes_input": sink_notes_input, "load_date": job_load_date.strftime("%Y-%m-%d")
+            })
+            session.commit()
         
         st.toast(f"Shared Draft {job_number} saved to Cloud!", icon="💾")
         reset_form()
@@ -215,7 +213,7 @@ if btn_col2.button("🧹 Clear Form Screen", use_container_width=True):
     reset_form()
     st.rerun()
 
-# Button 3: Submit Complete Sheet (Form Post + Cloud Wipe combo)
+# Button 3: Submit Complete Sheet (Form Post + Safe Session Transaction cleanup combo)
 if btn_col3.button("Submit Load-Out Sheet", type="primary", use_container_width=True):
     if not job_number or not installer_name or not subcontractor:
         st.error("Please fill out the Job Number, Subcontractor, and Installer Name before submitting.")
@@ -242,10 +240,11 @@ if btn_col3.button("Submit Load-Out Sheet", type="primary", use_container_width=
                 response = requests.post(FORM_URL, data=form_data, headers=headers)
                 
                 if response.status_code == 200:
-                    # Wipe the cloud row out since the job has officially moved into the final office sheet
+                    # Clean out the cloud table row using a standard clean data deletion context
                     conn = get_db_connection()
-                    conn.execute("DELETE FROM drafts WHERE job_number = ?", (job_number,))
-                    conn.commit()
+                    with conn.session as session:
+                        session.execute(text("DELETE FROM drafts WHERE job_number = :job"), {"job": job_number})
+                        session.commit()
                     
                     st.success(f"🎉 Success! Job {job_number} load-out sheet saved.")
                     st.balloons()
