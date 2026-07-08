@@ -4,6 +4,10 @@ import datetime
 import requests
 from sqlalchemy import text
 import json
+import base64
+import io
+from PIL import Image
+import numpy as np
 
 st.set_page_config(page_title="Stone Shop Load-Out", layout="wide")
 
@@ -39,7 +43,7 @@ def init_db():
 
 init_db()
 
-# --- HARD RESET ARCHITECTURE (FORM VERSION TRACKER) ---
+# --- HARD RESET ARCHITECTURE ---
 if "form_version" not in st.session_state:
     st.session_state.form_version = 0
 
@@ -53,7 +57,6 @@ if "form_buffer" not in st.session_state:
     }
 
 def reset_form():
-    # 1. Reset the underlying storage values
     st.session_state.form_buffer = {
         "job_number": "", "subcontractor": "", "installer_name": "",
         "is_partial": "Yes - Full Job Leaving", "delayed_notes": "N/A",
@@ -61,7 +64,6 @@ def reset_form():
         "stock_sinks": 0, "customer_sinks": 0, "sink_notes_input": "",
         "load_date": datetime.date.today().strftime("%Y-%m-%d")
     }
-    # 2. Increment version suffix to completely destroy old browser inputs and force clean redrawing
     st.session_state.form_version += 1
 
 # --- SIDEBAR: REFINED GROUPING BY INSTALLER COMPANY ---
@@ -99,7 +101,6 @@ if saved_rows is not None and not saved_rows.empty:
                     
                     if col_load.button(f"📄 {r_data['job_number']} ({short_date})", key=f"load_{r_data['job_number']}", use_container_width=True):
                         st.session_state.form_buffer = r_data
-                        # FIX: Increment the form version so the screen hard-reloads the new data into the text boxes!
                         st.session_state.form_version += 1
                         st.rerun()
                         
@@ -118,7 +119,6 @@ else:
 st.title("📱 Job Load-Out & Sign-Off")
 st.write("Complete this form alongside the subcontractor during truck loading.")
 
-# Current version stamp shortcut
 v = st.session_state.form_version
 
 # --- SECTION 1: JOB INFO ---
@@ -180,14 +180,13 @@ st.warning("Installer Acknowledgment: By signing below, I confirm that I have ph
 st.write("Lead Installer Signature:")
 canvas_result = st_canvas(
     fill_color="rgba(255, 165, 0, 0.3)", stroke_width=3, stroke_color="#000000",
-    background_color="#eee", height=150, drawing_mode="freedraw", key=f"canvas_{v}",
+    background_color="#ffffff", height=150, drawing_mode="freedraw", key=f"canvas_{v}",
 )
 
 # --- ACTION FOOTER BUTTONS ---
 st.markdown("---")
 btn_col1, btn_col2, btn_col3 = st.columns([2, 2, 4])
 
-# Button 1: Save / Update Shared Cloud Draft
 if btn_col1.button("💾 Save for Future Job", use_container_width=True):
     if not job_number:
         st.error("Please fill out a 'Job Name / Number' before choosing Save for Future.")
@@ -206,17 +205,14 @@ if btn_col1.button("💾 Save for Future Job", use_container_width=True):
                 "stock_sinks": stock_sinks, "customer_sinks": customer_sinks, "sink_notes_input": sink_notes_input, "load_date": job_load_date.strftime("%Y-%m-%d")
             })
             session.commit()
-        
         st.toast(f"Shared Draft {job_number} saved to Cloud!", icon="💾")
         reset_form()
         st.rerun()
 
-# Button 2: Manual Clear Screen
 if btn_col2.button("🧹 Clear Form Screen", use_container_width=True):
     reset_form()
     st.rerun()
 
-# Button 3: Submit Complete Sheet
 if btn_col3.button("Submit Load-Out Sheet", type="primary", use_container_width=True):
     if not job_number or not installer_name or not subcontractor:
         st.error("Please fill out the Job Number, Subcontractor, and Installer Name before submitting.")
@@ -224,17 +220,42 @@ if btn_col3.button("Submit Load-Out Sheet", type="primary", use_container_width=
         st.error("The Lead Installer must sign the signature box before submitting.")
     else:
         try:
-            with st.spinner("Saving data securely..."):
-                timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                sig_data = json.dumps(canvas_result.json_data["objects"])
+            with st.spinner("Processing signature and saving data..."):
+                # --- IMAGE PROCESSING ---
+                # Convert the raw canvas drawing array into a PNG image format
+                img_array = canvas_result.image_data
+                img = Image.fromarray(img_array.astype('uint8'), 'RGBA')
                 
+                # Give it a solid white background instead of transparent so it shows up perfectly in Sheets
+                background = Image.new("RGBA", img.size, (255, 255, 255, 255))
+                composite = Image.alpha_composite(background, img).convert("RGB")
+                
+                # Convert the finalized image into a web-ready base64 text string
+                buffer = io.BytesIO()
+                composite.save(buffer, format="PNG")
+                img_b64 = base64.b64encode(buffer.getvalue()).decode()
+                
+                # Post the image safely to ImgBB and grab the hosted URL link back
+                try:
+                    IMGBB_KEY = st.secrets["IMGBB_API"]
+                    upload_response = requests.post(f"https://api.imgbb.com/1/upload?key={IMGBB_KEY}", data={"image": img_b64})
+                    if upload_response.status_code == 200:
+                        signature_link = upload_response.json()["data"]["url"]
+                    else:
+                        signature_link = "Error processing image upload."
+                except Exception:
+                    signature_link = "API Key Error or Missing ImgBB Secret."
+                
+                # --- GOOGLE FORM SUBMISSION ---
+                timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 text_summary = (
                     f"Job: {job_number} | Co: {subcontractor} | Name: {installer_name} | Total Loaded: {total_pieces} | "
                     f"Breakdown: [K:{k_count}, MB:{mb_count}, Bath:{ob_count}, Splash:{splash_count}, Other:{other_count}] | "
                     f"Sinks: {sinks_notes} | Delayed: {delayed_notes}"
                 )
                 
-                form_data = {"entry.2095053729": text_summary, "entry.2107411274": sig_data}
+                # Form Payload (Notice we are now passing the clean URL link instead of the massive JSON drawing math)
+                form_data = {"entry.2095053729": text_summary, "entry.2107411274": signature_link}
                 headers = {
                     "Referer": FORM_URL.replace("/formResponse", "/viewform"),
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
