@@ -8,11 +8,24 @@ import base64
 import io
 from PIL import Image
 import numpy as np
+import uuid
 
 st.set_page_config(page_title="Stone Shop Load-Out", layout="wide")
 
 # 🔗 MAIN FORM ENDPOINT
 FORM_URL = "https://docs.google.com/forms/d/1WWbNVnH7-9U3jEGjfMClNT-ZIKTXz1QZM73cCIapNJc/formResponse"
+
+# --- SINK MASTER LIST ---
+SINK_MODELS = [
+    "Select a sink...",
+    "1812", "1714", "1611", 
+    "Kitchen single bowl", "Kitchen 60/40", 
+    "Laundry", "wet bar", 
+    "Kitchen zero radius single bowl", "Laundry zero radius", "wet bar zero radius", 
+    "K8206-CM1", "K8206-CM3", "K8206-CM6", 
+    "K28001-CM1", "K28001-CM3", "K28001-CM6", 
+    "K8223-CM1", "K8223-CM3", "K8223-CM6"
+]
 
 # --- SHARED CLOUD DATABASE CONFIGURATION ---
 def get_db_connection():
@@ -21,8 +34,9 @@ def get_db_connection():
 def init_db():
     conn = get_db_connection()
     with conn.session as session:
+        # Created drafts_v2 to handle the new complex JSON list format for sinks
         session.execute(text("""
-            CREATE TABLE IF NOT EXISTS drafts (
+            CREATE TABLE IF NOT EXISTS drafts_v2 (
                 job_number TEXT PRIMARY KEY,
                 subcontractor TEXT,
                 installer_name TEXT,
@@ -33,7 +47,7 @@ def init_db():
                 ob_count INTEGER,
                 splash_count INTEGER,
                 other_count INTEGER,
-                stock_sinks INTEGER,
+                stock_sinks_json TEXT,
                 customer_sinks INTEGER,
                 sink_notes_input TEXT,
                 load_date TEXT
@@ -52,7 +66,7 @@ if "form_buffer" not in st.session_state:
         "job_number": "", "subcontractor": "", "installer_name": "",
         "is_partial": "Yes - Full Job Leaving", "delayed_notes": "N/A",
         "k_count": 0, "mb_count": 0, "ob_count": 0, "splash_count": 0, "other_count": 0,
-        "stock_sinks": 0, "customer_sinks": 0, "sink_notes_input": "",
+        "stock_sinks_list": [], "customer_sinks": 0, "sink_notes_input": "",
         "load_date": datetime.date.today().strftime("%Y-%m-%d")
     }
 
@@ -61,7 +75,7 @@ def reset_form():
         "job_number": "", "subcontractor": "", "installer_name": "",
         "is_partial": "Yes - Full Job Leaving", "delayed_notes": "N/A",
         "k_count": 0, "mb_count": 0, "ob_count": 0, "splash_count": 0, "other_count": 0,
-        "stock_sinks": 0, "customer_sinks": 0, "sink_notes_input": "",
+        "stock_sinks_list": [], "customer_sinks": 0, "sink_notes_input": "",
         "load_date": datetime.date.today().strftime("%Y-%m-%d")
     }
     st.session_state.form_version += 1
@@ -71,7 +85,7 @@ st.sidebar.title("📁 Scheduled Drafts Ledger")
 search_query = st.sidebar.text_input("🔍 Search Jobs / Subcontractors", "").strip().lower()
 
 conn = get_db_connection()
-saved_rows = conn.query("SELECT * FROM drafts", ttl=0)
+saved_rows = conn.query("SELECT * FROM drafts_v2", ttl=0)
 
 if saved_rows is not None and not saved_rows.empty:
     grouped_by_installer = {}
@@ -100,13 +114,34 @@ if saved_rows is not None and not saved_rows.empty:
                     col_load, col_del = st.columns([4, 1])
                     
                     if col_load.button(f"📄 {r_data['job_number']} ({short_date})", key=f"load_{r_data['job_number']}", use_container_width=True):
-                        st.session_state.form_buffer = r_data
+                        # Parse the JSON string back into a Python list cleanly
+                        try:
+                            loaded_sinks = json.loads(r_data["stock_sinks_json"])
+                        except Exception:
+                            loaded_sinks = []
+                            
+                        st.session_state.form_buffer = {
+                            "job_number": r_data["job_number"],
+                            "subcontractor": r_data["subcontractor"],
+                            "installer_name": r_data["installer_name"],
+                            "is_partial": r_data["is_partial"],
+                            "delayed_notes": r_data["delayed_notes"],
+                            "k_count": int(r_data["k_count"]),
+                            "mb_count": int(r_data["mb_count"]),
+                            "ob_count": int(r_data["ob_count"]),
+                            "splash_count": int(r_data["splash_count"]),
+                            "other_count": int(r_data["other_count"]),
+                            "stock_sinks_list": loaded_sinks,
+                            "customer_sinks": int(r_data["customer_sinks"]),
+                            "sink_notes_input": r_data["sink_notes_input"],
+                            "load_date": r_data["load_date"]
+                        }
                         st.session_state.form_version += 1
                         st.rerun()
                         
                     if col_del.button("❌", key=f"del_{r_data['job_number']}"):
                         with conn.session as session:
-                            session.execute(text("DELETE FROM drafts WHERE job_number = :job"), {"job": r_data['job_number']})
+                            session.execute(text("DELETE FROM drafts_v2 WHERE job_number = :job"), {"job": r_data['job_number']})
                             session.commit()
                         st.rerun()
             st.sidebar.markdown("---")
@@ -162,16 +197,42 @@ st.metric(label="Total Pieces Checked Onto Truck", value=total_pieces)
 
 # --- SECTION 4: SINK ACCOUNTING ---
 st.header("4. Sink Accounting")
-col3, col4 = st.columns(2)
-with col3:
-    stock_sinks = st.number_input("Shop Stock Sinks Loaded", min_value=0, step=1, value=int(st.session_state.form_buffer["stock_sinks"]), key=f"ssink_{v}")
-with col4:
+
+# Dynamic Stock Sinks UI
+st.subheader("🛒 Shop Stock Sinks")
+for sink in st.session_state.form_buffer["stock_sinks_list"]:
+    sc1, sc2, sc3 = st.columns([6, 2, 1])
+    with sc1:
+        # Determine current index to keep dropdown locked on correct value
+        current_idx = SINK_MODELS.index(sink["model"]) if sink["model"] in SINK_MODELS else 0
+        sink["model"] = st.selectbox("Model", SINK_MODELS, index=current_idx, key=f"mod_{sink['id']}_{v}", label_visibility="collapsed")
+    with sc2:
+        sink["qty"] = st.number_input("Qty", min_value=1, step=1, value=sink["qty"], key=f"qty_{sink['id']}_{v}", label_visibility="collapsed")
+    with sc3:
+        # X Button removes the specific UUID dictionary from the list
+        if st.button("❌", key=f"del_{sink['id']}_{v}"):
+            st.session_state.form_buffer["stock_sinks_list"].remove(sink)
+            st.rerun()
+
+if st.button("➕ Add Stock Sink"):
+    st.session_state.form_buffer["stock_sinks_list"].append({"id": str(uuid.uuid4()), "model": SINK_MODELS[0], "qty": 1})
+    st.rerun()
+
+st.markdown("---")
+
+col_cust1, col_cust2 = st.columns(2)
+with col_cust1:
     customer_sinks = st.number_input("Customer-Provided Sinks Loaded", min_value=0, step=1, value=int(st.session_state.form_buffer["customer_sinks"]), key=f"csink_{v}")
+with col_cust2:
+    sink_notes_input = st.text_input("Sink Notes (Missing sinks, descriptions, etc.)", value=st.session_state.form_buffer["sink_notes_input"], key=f"snote_{v}")
 
-sink_notes_input = st.text_input("Sink Notes (e.g., missing sinks, specific model types, or description)", value=st.session_state.form_buffer["sink_notes_input"], key=f"snote_{v}")
+# Process the dynamic sink list into a clean string for Google Sheets
 sink_notes_final = "None" if not sink_notes_input else sink_notes_input
+stock_sinks_formatted = ", ".join([f"{s['qty']}x {s['model']}" for s in st.session_state.form_buffer["stock_sinks_list"] if s['model'] != "Select a sink..."])
+if not stock_sinks_formatted:
+    stock_sinks_formatted = "None"
 
-sinks_notes = f"Stock Sinks: {stock_sinks} | Customer Sinks: {customer_sinks} | Sink Notes: {sink_notes_final}"
+sinks_notes = f"Stock Sinks: [{stock_sinks_formatted}] | Customer Sinks: {customer_sinks} | Sink Notes: {sink_notes_final}"
 
 # --- SECTION 5: SIGNATURE ---
 st.header("5. Custody Transfer & Sign-Off")
@@ -194,15 +255,16 @@ if btn_col1.button("💾 Save for Future Job", use_container_width=True):
         conn = get_db_connection()
         with conn.session as session:
             session.execute(text("""
-                INSERT OR REPLACE INTO drafts (
+                INSERT OR REPLACE INTO drafts_v2 (
                     job_number, subcontractor, installer_name, is_partial, delayed_notes,
-                    k_count, mb_count, ob_count, splash_count, other_count, stock_sinks, customer_sinks, sink_notes_input, load_date
+                    k_count, mb_count, ob_count, splash_count, other_count, stock_sinks_json, customer_sinks, sink_notes_input, load_date
                 ) VALUES (:job_number, :subcontractor, :installer_name, :is_partial, :delayed_notes,
-                          :k_count, :mb_count, :ob_count, :splash_count, :other_count, :stock_sinks, :customer_sinks, :sink_notes_input, :load_date)
+                          :k_count, :mb_count, :ob_count, :splash_count, :other_count, :stock_sinks_json, :customer_sinks, :sink_notes_input, :load_date)
             """), {
                 "job_number": job_number, "subcontractor": subcontractor, "installer_name": installer_name, "is_partial": is_partial, "delayed_notes": delayed_notes,
                 "k_count": k_count, "mb_count": mb_count, "ob_count": ob_count, "splash_count": splash_count, "other_count": other_count, 
-                "stock_sinks": stock_sinks, "customer_sinks": customer_sinks, "sink_notes_input": sink_notes_input, "load_date": job_load_date.strftime("%Y-%m-%d")
+                "stock_sinks_json": json.dumps(st.session_state.form_buffer["stock_sinks_list"]), 
+                "customer_sinks": customer_sinks, "sink_notes_input": sink_notes_input, "load_date": job_load_date.strftime("%Y-%m-%d")
             })
             session.commit()
         st.toast(f"Shared Draft {job_number} saved to Cloud!", icon="💾")
@@ -220,7 +282,6 @@ if btn_col3.button("Submit Load-Out Sheet", type="primary", use_container_width=
         st.error("The Lead Installer must sign the signature box before submitting.")
     else:
         with st.spinner("Processing signature and saving data..."):
-            # 🛑 FAIL-SAFE 1: CHECK FOR API KEY
             try:
                 IMGBB_KEY = st.secrets["IMGBB_API"]
             except KeyError:
@@ -266,7 +327,7 @@ if btn_col3.button("Submit Load-Out Sheet", type="primary", use_container_width=
                 if response.status_code == 200:
                     conn = get_db_connection()
                     with conn.session as session:
-                        session.execute(text("DELETE FROM drafts WHERE job_number = :job"), {"job": job_number})
+                        session.execute(text("DELETE FROM drafts_v2 WHERE job_number = :job"), {"job": job_number})
                         session.commit()
                     
                     st.success(f"🎉 Success! Job {job_number} load-out sheet saved.")
