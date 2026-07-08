@@ -43,7 +43,7 @@ def init_db():
 
 init_db()
 
-# --- HARD RESET ARCHITECTURE ---
+# --- HARD RESET ARCHITECTURE (FORM VERSION TRACKER) ---
 if "form_version" not in st.session_state:
     st.session_state.form_version = 0
 
@@ -219,33 +219,33 @@ if btn_col3.button("Submit Load-Out Sheet", type="primary", use_container_width=
     elif not canvas_result.json_data or len(canvas_result.json_data["objects"]) == 0:
         st.error("The Lead Installer must sign the signature box before submitting.")
     else:
-        try:
-            with st.spinner("Processing signature and saving data..."):
+        with st.spinner("Processing signature and saving data..."):
+            # 🛑 FAIL-SAFE 1: CHECK FOR API KEY
+            try:
+                IMGBB_KEY = st.secrets["IMGBB_API"]
+            except KeyError:
+                st.error("🚨 Missing 'IMGBB_API' key! Please check your Streamlit Secrets panel.")
+                st.stop()
+                
+            try:
                 # --- IMAGE PROCESSING ---
-                # Convert the raw canvas drawing array into a PNG image format
                 img_array = canvas_result.image_data
                 img = Image.fromarray(img_array.astype('uint8'), 'RGBA')
-                
-                # Give it a solid white background instead of transparent so it shows up perfectly in Sheets
                 background = Image.new("RGBA", img.size, (255, 255, 255, 255))
                 composite = Image.alpha_composite(background, img).convert("RGB")
                 
-                # Convert the finalized image into a web-ready base64 text string
                 buffer = io.BytesIO()
                 composite.save(buffer, format="PNG")
                 img_b64 = base64.b64encode(buffer.getvalue()).decode()
                 
-                # Post the image safely to ImgBB and grab the hosted URL link back
-                try:
-                    IMGBB_KEY = st.secrets["IMGBB_API"]
-                    upload_response = requests.post(f"https://api.imgbb.com/1/upload?key={IMGBB_KEY}", data={"image": img_b64})
-                    if upload_response.status_code == 200:
-                        signature_link = upload_response.json()["data"]["url"]
-                    else:
-                        signature_link = "Error processing image upload."
-                except Exception:
-                    signature_link = "API Key Error or Missing ImgBB Secret."
-                
+                # --- IMAGE UPLOAD ---
+                upload_response = requests.post(f"https://api.imgbb.com/1/upload?key={IMGBB_KEY}", data={"image": img_b64})
+                if upload_response.status_code == 200:
+                    signature_link = upload_response.json()["data"]["url"]
+                else:
+                    st.error(f"🚨 ImgBB Upload Failed: Server responded with code {upload_response.status_code}. {upload_response.text}")
+                    st.stop()
+                    
                 # --- GOOGLE FORM SUBMISSION ---
                 timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 text_summary = (
@@ -254,7 +254,7 @@ if btn_col3.button("Submit Load-Out Sheet", type="primary", use_container_width=
                     f"Sinks: {sinks_notes} | Delayed: {delayed_notes}"
                 )
                 
-                # Form Payload (Notice we are now passing the clean URL link instead of the massive JSON drawing math)
+                # Form Payload
                 form_data = {"entry.2095053729": text_summary, "entry.2107411274": signature_link}
                 headers = {
                     "Referer": FORM_URL.replace("/formResponse", "/viewform"),
@@ -276,5 +276,5 @@ if btn_col3.button("Submit Load-Out Sheet", type="primary", use_container_width=
                 else:
                     st.error(f"Form submission returned status code: {response.status_code}")
                     
-        except Exception as e:
-            st.error(f"An error occurred while saving: {e}")
+            except Exception as e:
+                st.error(f"An error occurred while saving: {e}")
